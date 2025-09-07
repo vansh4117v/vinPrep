@@ -5,6 +5,11 @@ import { google } from "@ai-sdk/google";
 
 import { db } from "@/firebase/admin";
 import { feedbackSchema } from "@/constants";
+import {
+  incrementUserInterviewCount,
+  incrementUserQuestionCount,
+  initializeUserStats,
+} from "@/lib/actions/user-stats.action";
 
 export async function createFeedback(params: CreateFeedbackParams) {
   const { interviewId, userId, transcript, feedbackId } = params;
@@ -12,8 +17,7 @@ export async function createFeedback(params: CreateFeedbackParams) {
   try {
     const formattedTranscript = transcript
       .map(
-        (sentence: { role: string; content: string }) =>
-          `- ${sentence.role}: ${sentence.content}\n`
+        (sentence: { role: string; content: string }) => `- ${sentence.role}: ${sentence.content}\n`
       )
       .join("");
 
@@ -103,6 +107,41 @@ export async function createFeedback(params: CreateFeedbackParams) {
 
     await feedbackRef.set(feedback);
 
+    // Update user statistics when feedback is created (interview completed)
+    // Always update stats for completed interviews
+    try {
+      console.log("🔄 Updating user stats for completed interview...");
+      console.log("📊 Interview ID:", interviewId);
+      console.log("👤 User ID:", userId);
+      console.log("📝 Feedback ID:", feedbackId);
+
+      // Initialize user stats if they don't exist
+      console.log("🏗️ Initializing user stats...");
+      await initializeUserStats(userId);
+
+      // Get the interview to know how many questions were asked
+      const interview = await getInterviewById(interviewId);
+      const questionCount = interview?.questions?.length || 0;
+
+      console.log("❓ Question count:", questionCount);
+
+      // Update user stats - this represents a completed interview
+      console.log("⬆️ Incrementing interview count...");
+      const interviewResult = await incrementUserInterviewCount(userId);
+      console.log("✅ Interview count result:", interviewResult);
+
+      if (questionCount > 0) {
+        console.log("⬆️ Incrementing question count...");
+        const questionResult = await incrementUserQuestionCount(userId, questionCount);
+        console.log("✅ Question count result:", questionResult);
+      }
+
+      console.log("🎉 User stats updated successfully!");
+    } catch (statsError) {
+      console.error("❌ Error updating user stats:", statsError);
+      // Don't fail the feedback creation if stats update fails
+    }
+
     return { success: true, feedbackId: feedbackRef.id };
   } catch (error) {
     console.error("Error saving feedback:", error);
@@ -142,9 +181,7 @@ export async function getFeedbackByInterviewId(
       .where("interviewId", "==", interviewId)
       .get();
 
-    const matchingFeedback = allFeedback.docs.find(
-      (doc) => doc.data().userId === userId
-    );
+    const matchingFeedback = allFeedback.docs.find((doc) => doc.data().userId === userId);
 
     if (!matchingFeedback) return null;
 
@@ -175,10 +212,7 @@ export async function getLatestInterviews(
     // If composite index is not available, fall back to filtering in memory
     console.log("Falling back to client-side filtering for latest interviews");
 
-    const interviews = await db
-      .collection("interviews")
-      .where("finalized", "==", true)
-      .get();
+    const interviews = await db.collection("interviews").where("finalized", "==", true).get();
 
     const interviewsData = interviews.docs.map((doc) => ({
       id: doc.id,
@@ -187,19 +221,14 @@ export async function getLatestInterviews(
 
     const filteredInterviews = interviewsData
       .filter((interview) => interview.userId === userId)
-      .sort(
-        (a, b) =>
-          new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-      )
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
       .slice(0, limit);
 
     return filteredInterviews;
   }
 }
 
-export async function getInterviewsByUserId(
-  userId: string
-): Promise<Interview[] | null> {
+export async function getInterviewsByUserId(userId: string): Promise<Interview[] | null> {
   try {
     // Try the optimized query first
     const interviews = await db
@@ -216,10 +245,7 @@ export async function getInterviewsByUserId(
     // If index is not available, fall back to client-side sorting
     console.log("Falling back to client-side sorting for user interviews");
 
-    const interviews = await db
-      .collection("interviews")
-      .where("userId", "==", userId)
-      .get();
+    const interviews = await db.collection("interviews").where("userId", "==", userId).get();
 
     const interviewsData = interviews.docs.map((doc) => ({
       id: doc.id,
@@ -228,8 +254,7 @@ export async function getInterviewsByUserId(
 
     // Sort by createdAt in descending order (newest first)
     return interviewsData.sort(
-      (a, b) =>
-        new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+      (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
     );
   }
 }

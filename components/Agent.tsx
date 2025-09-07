@@ -9,6 +9,7 @@ import { vapi } from "@/lib/vapi.sdk";
 import { interviewer } from "@/constants";
 import { enhancedInterviewer } from "@/constants/enhanced-interviewer";
 import { createFeedback } from "@/lib/actions/general.action";
+import { incrementUserInterviewCount, incrementUserQuestionCount } from "@/lib/actions/user-stats.action";
 
 enum CallStatus {
   INACTIVE = "INACTIVE",
@@ -89,7 +90,11 @@ const Agent = ({
     }
 
     const handleGenerateFeedback = async (messages: SavedMessage[]) => {
-      console.log("handleGenerateFeedback");
+      console.log("🎯 handleGenerateFeedback - Starting feedback creation");
+      console.log("📝 Messages length:", messages.length);
+      console.log("🎭 Interview type:", type);
+      console.log("🔢 Interview ID:", interviewId);
+      console.log("👤 User ID:", userId);
 
       const { success, feedbackId: id } = await createFeedback({
         interviewId: interviewId!,
@@ -99,15 +104,63 @@ const Agent = ({
       });
 
       if (success && id) {
+        console.log("✅ Feedback created successfully:", id);
         router.push(`/interview/${interviewId}/feedback`);
       } else {
-        console.log("Error saving feedback");
+        console.log("❌ Error saving feedback");
         router.push("/");
       }
     };
 
     if (callStatus === CallStatus.FINISHED) {
       if (type === "generate") {
+        // For generate type, we need to update stats directly since there's no specific interview ID
+        // The interview was created via VAPI workflow, so we just need to count the completion
+        if (messages.length > 0) {
+          console.log("🔥 Generate type interview completed - updating stats directly");
+          
+          // Update stats for completed generate interview
+          const updateStats = async () => {
+            try {
+              console.log("⬆️ Incrementing stats for generate interview completion");
+              
+              // Estimate question count from messages (divide by 2 since it's back and forth)
+              const estimatedQuestions = Math.ceil(messages.length / 2);
+              
+              await incrementUserInterviewCount(userId!);
+              if (estimatedQuestions > 0) {
+                await incrementUserQuestionCount(userId!, estimatedQuestions);
+              }
+              
+              // Create synthetic feedback for dashboard analytics
+              const response = await fetch('/api/feedback/synthetic', {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                  userId: userId!,
+                  estimatedQuestions
+                })
+              });
+              
+              if (response.ok) {
+                const result = await response.json();
+                console.log("✅ Synthetic feedback created:", result.feedbackId);
+              } else {
+                console.error("❌ Failed to create synthetic feedback");
+              }
+              
+              console.log("✅ Stats updated for generate interview");
+            } catch (error) {
+              console.error("❌ Error updating stats for generate interview:", error);
+            }
+          };
+          
+          updateStats();
+        }
+        
+        console.log("🔄 Generate type completed - redirecting to home");
         router.push("/");
       } else {
         handleGenerateFeedback(messages);
